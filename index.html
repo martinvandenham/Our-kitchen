@@ -270,6 +270,23 @@
     .nav-btn.active { color: white; }
     .nav-btn-icon { font-size: 22px; line-height: 1; }
 
+    .grocery-shop-scroll {
+      display: flex; gap: 8px; overflow-x: auto; padding-bottom: 12px;
+      scrollbar-width: none; margin-bottom: 14px;
+    }
+    .grocery-shop-scroll::-webkit-scrollbar { display: none; }
+    .shop-chip {
+      padding: 5px 14px; border-radius: 20px; border: 1.5px solid var(--light);
+      background: white; cursor: pointer; white-space: nowrap; font-size: 12px;
+      color: var(--mid); font-family: 'Lato', sans-serif; font-weight: 700;
+      transition: all 0.15s;
+    }
+    .shop-chip.active { background: var(--brown); color: white; border-color: var(--brown); }
+    .shop-tag {
+      font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 8px;
+      background: var(--tag-bg); color: var(--tag); white-space: nowrap;
+    }
+
     /* GROCERY */
     .grocery-page { max-width: 720px; margin: 0 auto; padding: 20px 16px 80px; }
     .grocery-section-title {
@@ -380,21 +397,22 @@
   <!-- GROCERIES -->
   <div class="grocery-page" id="view-grocery" style="display:none">
 
+    <!-- Shop filter -->
+    <div class="grocery-shop-scroll" id="grocery-shop-scroll"></div>
+
+    <!-- Add item row -->
+    <div class="grocery-add-row">
+      <input class="grocery-add-input" id="g-name" placeholder="Add item…" onkeydown="if(event.key==='Enter')addGroceryItem()" />
+      <input class="grocery-qty-input" id="g-qty" placeholder="Qty" onkeydown="if(event.key==='Enter')addGroceryItem()" />
+      <button class="grocery-add-btn" onclick="addGroceryItem()">+</button>
+    </div>
+
+    <!-- List header -->
     <div class="grocery-section-title">
-      <span>🛒 This week</span>
+      <span id="grocery-list-label">🛒 All items</span>
       <button class="clear-done-btn" onclick="clearDone()">Clear done</button>
     </div>
-    <div id="weekly-list"></div>
-
-    <div class="grocery-section-title" style="margin-top:28px">
-      <span>➕ Extras</span>
-    </div>
-    <div class="grocery-add-row">
-      <input class="grocery-add-input" id="extra-name" placeholder="Add item…" onkeydown="if(event.key==='Enter')addExtra()" />
-      <input class="grocery-qty-input" id="extra-qty" placeholder="Qty" onkeydown="if(event.key==='Enter')addExtra()" />
-      <button class="grocery-add-btn" onclick="addExtra()">+</button>
-    </div>
-    <div id="extras-list"></div>
+    <div id="grocery-list"></div>
   </div>
 
   <!-- BOTTOM NAV -->
@@ -430,15 +448,16 @@
   const fbApp = initializeApp(firebaseConfig);
   const db = getFirestore(fbApp);
   const recipesCol = collection(db, "recipes");
-  const weeklyCol = collection(db, "weekly_items");
-  const extrasCol = collection(db, "extra_items");
+  const groceryCol = collection(db, "grocery_items");
+
+  const SHOPS = ["All", "AH", "MCD", "Pers", "Turk"];
 
   const CATEGORIES = ["All","Asian","Breakfast","Dessert","Drinks","Dutch","Latin","Mediterranean","Meat","Other","Pasta","Salad","Side Dishes","Soup","Vegetarian"];
   const EMOJIS = ["🍝","🥗","🍲","🥩","🍰","🥞","🍜","🥘","🍱","🧁","🍕","🍷","🍣","🫕","🥐","🍛","🥙","🍔","🌮","🥧"];
 
   let recipes = [];
-  let weeklyItems = [];
-  let extraItems = [];
+  let groceryItems = [];
+  let activeShop = "All";
   let activeTab = "recipes";
   let activeFilter = "All";
   let currentView = "list";
@@ -473,11 +492,11 @@
   window.triggerPhotoInput = triggerPhotoInput;
   window.handlePhotoUpload = handlePhotoUpload;
   window.switchTab = switchTab;
-  window.addExtra = addExtra;
+  window.addGroceryItem = addGroceryItem;
   window.clearDone = clearDone;
   window.toggleItem = toggleItem;
   window.deleteItem = deleteItem;
-  window.addWeeklyItem = addWeeklyItem;
+  window.setShopFilter = setShopFilter;
 
   // INIT — listen to Firestore in real time
   function init() {
@@ -496,15 +515,10 @@
     });
     renderCategories();
 
-    // Grocery listeners
-    onSnapshot(weeklyCol, snap => {
-      weeklyItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      weeklyItems.sort((a,b) => (a.order||0) - (b.order||0));
-      if (activeTab === "grocery") renderGrocery();
-    });
-    onSnapshot(extrasCol, snap => {
-      extraItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      extraItems.sort((a,b) => (a.createdAt?.seconds||0) - (b.createdAt?.seconds||0));
+    // Grocery listener
+    onSnapshot(groceryCol, snap => {
+      groceryItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      groceryItems.sort((a,b) => (a.createdAt?.seconds||0) - (b.createdAt?.seconds||0));
       if (activeTab === "grocery") renderGrocery();
     });
   }
@@ -538,78 +552,59 @@
 
   // GROCERY RENDER
   function renderGrocery() {
+    // Shop filter chips
+    document.getElementById("grocery-shop-scroll").innerHTML =
+      SHOPS.map(s => `<button class="shop-chip ${s === activeShop ? 'active' : ''}" onclick="setShopFilter('${s}')">${s === "All" ? "🛒 All" : s}</button>`).join("");
 
-    // Weekly items
-    const wEl = document.getElementById("weekly-list");
-    if (weeklyItems.length === 0) {
-      wEl.innerHTML = `<div class="grocery-empty"><p>No weekly items yet.<br>Add your staples below!</p></div>
-        <div class="grocery-add-row">
-          <input class="grocery-add-input" id="weekly-name" placeholder="e.g. Milk, Eggs…" onkeydown="if(event.key==='Enter')addWeeklyItem()" />
-          <input class="grocery-qty-input" id="weekly-qty" placeholder="Qty" onkeydown="if(event.key==='Enter')addWeeklyItem()" />
-          <button class="grocery-add-btn" onclick="addWeeklyItem()">+</button>
-        </div>`;
-    } else {
-      wEl.innerHTML = weeklyItems.map(item => `
-        <div class="grocery-item ${item.checked ? 'checked' : ''}">
-          <div class="grocery-check" onclick="toggleItem('weekly','${item.id}',${!item.checked})">${item.checked ? '✓' : ''}</div>
-          <span class="grocery-name">${esc(item.name)}</span>
-          ${item.qty ? `<span class="grocery-qty">${esc(item.qty)}</span>` : ""}
-          <button class="grocery-delete" onclick="deleteItem('weekly','${item.id}')">✕</button>
-        </div>`).join("") +
-        `<div class="grocery-add-row" style="margin-top:12px">
-          <input class="grocery-add-input" id="weekly-name" placeholder="Add weekly item…" onkeydown="if(event.key==='Enter')addWeeklyItem()" />
-          <input class="grocery-qty-input" id="weekly-qty" placeholder="Qty" onkeydown="if(event.key==='Enter')addWeeklyItem()" />
-          <button class="grocery-add-btn" onclick="addWeeklyItem()">+</button>
-        </div>`;
+    const filtered = activeShop === "All"
+      ? groceryItems
+      : groceryItems.filter(i => i.shop === activeShop);
+
+    document.getElementById("grocery-list-label").textContent =
+      activeShop === "All" ? "🛒 All items" : `🛒 ${activeShop}`;
+
+    const el = document.getElementById("grocery-list");
+    if (filtered.length === 0) {
+      el.innerHTML = `<div class="grocery-empty"><p>No items yet. Add one above!</p></div>`;
+      return;
     }
-
-    // Extras
-    const eEl = document.getElementById("extras-list");
-    eEl.innerHTML = extraItems.length === 0
-      ? `<div class="grocery-empty"><p>No extras added yet.</p></div>`
-      : extraItems.map(item => `
-        <div class="grocery-item ${item.checked ? 'checked' : ''}">
-          <div class="grocery-check" onclick="toggleItem('extra','${item.id}',${!item.checked})">${item.checked ? '✓' : ''}</div>
-          <span class="grocery-name">${esc(item.name)}</span>
-          ${item.qty ? `<span class="grocery-qty">${esc(item.qty)}</span>` : ""}
-          <button class="grocery-delete" onclick="deleteItem('extra','${item.id}')">✕</button>
-        </div>`).join("");
+    const sorted = [...filtered.filter(i => !i.checked), ...filtered.filter(i => i.checked)];
+    el.innerHTML = sorted.map(item => `
+      <div class="grocery-item ${item.checked ? 'checked' : ''}">
+        <div class="grocery-check" onclick="toggleItem('${item.id}',${!item.checked})">${item.checked ? '✓' : ''}</div>
+        <span class="grocery-name">${esc(item.name)}</span>
+        ${item.qty ? `<span class="grocery-qty">${esc(item.qty)}</span>` : ""}
+        ${item.shop ? `<span class="shop-tag">${esc(item.shop)}</span>` : ""}
+        <button class="grocery-delete" onclick="deleteItem('${item.id}')">✕</button>
+      </div>`).join("");
   }
 
-  async function addWeeklyItem() {
-    const nameEl = document.getElementById("weekly-name");
-    const qtyEl = document.getElementById("weekly-qty");
+  function setShopFilter(shop) {
+    activeShop = shop;
+    renderGrocery();
+  }
+
+  async function addGroceryItem() {
+    const nameEl = document.getElementById("g-name");
+    const qtyEl = document.getElementById("g-qty");
     const name = nameEl?.value.trim();
     if (!name) return;
-    await addDoc(weeklyCol, { name, qty: qtyEl?.value.trim() || "", checked: false, order: weeklyItems.length, createdAt: serverTimestamp() });
+    const shop = activeShop !== "All" ? activeShop : "";
+    await addDoc(groceryCol, { name, qty: qtyEl?.value.trim() || "", shop, checked: false, createdAt: serverTimestamp() });
     if (nameEl) nameEl.value = "";
     if (qtyEl) qtyEl.value = "";
   }
 
-  async function addExtra() {
-    const nameEl = document.getElementById("extra-name");
-    const qtyEl = document.getElementById("extra-qty");
-    const name = nameEl?.value.trim();
-    if (!name) return;
-    await addDoc(extrasCol, { name, qty: qtyEl?.value.trim() || "", checked: false, createdAt: serverTimestamp() });
-    if (nameEl) nameEl.value = "";
-    if (qtyEl) qtyEl.value = "";
+  async function toggleItem(id, checked) {
+    await updateDoc(doc(db, "grocery_items", id), { checked });
   }
 
-  async function toggleItem(type, id, checked) {
-    const col = type === "weekly" ? weeklyCol : extrasCol;
-    await updateDoc(doc(db, type === "weekly" ? "weekly_items" : "extra_items", id), { checked });
-  }
-
-  async function deleteItem(type, id) {
-    await deleteDoc(doc(db, type === "weekly" ? "weekly_items" : "extra_items", id));
+  async function deleteItem(id) {
+    await deleteDoc(doc(db, "grocery_items", id));
   }
 
   async function clearDone() {
-    const toDelete = [
-      ...weeklyItems.filter(i => i.checked).map(i => deleteDoc(doc(db, "weekly_items", i.id))),
-      ...extraItems.filter(i => i.checked).map(i => deleteDoc(doc(db, "extra_items", i.id)))
-    ];
+    const toDelete = groceryItems.filter(i => i.checked).map(i => deleteDoc(doc(db, "grocery_items", i.id)));
     if (toDelete.length === 0) { showToast("Nothing to clear!"); return; }
     await Promise.all(toDelete);
     showToast(`Cleared ${toDelete.length} item${toDelete.length !== 1 ? "s" : ""} ✓`);
