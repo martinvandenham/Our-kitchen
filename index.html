@@ -569,6 +569,10 @@
       return;
     }
     const sorted = [...filtered.filter(i => !i.checked), ...filtered.filter(i => i.checked)];
+    sorted.sort((a, b) => {
+      if (a.checked !== b.checked) return a.checked ? 1 : -1;
+      return (a.shop || "").localeCompare(b.shop || "");
+    });
     el.innerHTML = sorted.map(item => `
       <div class="grocery-item ${item.checked ? 'checked' : ''}">
         <div class="grocery-check" onclick="toggleItem('${item.id}',${!item.checked})">${item.checked ? '✓' : ''}</div>
